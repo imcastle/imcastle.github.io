@@ -66,6 +66,7 @@
     const IconFileText = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>;
     const IconX = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
     const IconTrash = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>;
+    const IconUndo = ({ className }) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>;
 
     // --- 主程式 ---
     function ShiftSchedulerApp() {
@@ -105,6 +106,9 @@
       const [stats, setStats] = useState({});
       const [activeTab, setActiveTab] = useState('input');
       
+      // 復原狀態 (Undo History)
+      const [history, setHistory] = useState(null);
+
       // Modal 狀態
       const [showLeaveModal, setShowLeaveModal] = useState(false);
       const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
@@ -129,6 +133,7 @@
             setLockedAssignments(parsed.lockedAssignments || {});
             setAssignments(parsed.assignments || {});
             setStats(parsed.stats || {});
+            setHistory(null); // 切換月份時清空復原紀錄
             return;
           }
         } catch (e) {}
@@ -141,6 +146,7 @@
         setLockedAssignments({});
         setAssignments({});
         setStats({});
+        setHistory(null);
         setActiveTab('input');
       }, [currentDate, daysInMonth]);
 
@@ -155,6 +161,23 @@
       const getDayOfWeekIndex = (day) => new Date(year, month - 1, day).getDay();
       const getDayOfWeek = (day) => ['日', '一', '二', '三', '四', '五', '六'][getDayOfWeekIndex(day)];
       const isWeekend = (day) => getDayOfWeekIndex(day) === 0 || getDayOfWeekIndex(day) === 6;
+
+      // 儲存當前狀態到歷史紀錄
+      const saveToHistory = () => {
+        setHistory({
+          schedule: JSON.parse(JSON.stringify(schedule)),
+          lockedAssignments: JSON.parse(JSON.stringify(lockedAssignments))
+        });
+      };
+
+      // 執行復原
+      const handleUndo = () => {
+        if (history) {
+          setSchedule(history.schedule);
+          setLockedAssignments(history.lockedAssignments);
+          setHistory(null); // 復原後清空紀錄
+        }
+      };
 
       const toggleWorkStatus = (day, empId) => {
         setSchedule(prev => {
@@ -205,6 +228,8 @@
           return;
         }
 
+        saveToHistory(); // 儲存歷史紀錄
+
         const lines = leaveInputText.split('\n');
         const leaveMap = {}; 
 
@@ -249,13 +274,14 @@
 
       // --- 清除所有休假邏輯 ---
       const handleClearAllLeaves = () => {
+        saveToHistory(); // 儲存歷史紀錄
+
         const newSchedule = {};
         for (let day = 1; day <= daysInMonth; day++) {
-          // 將所有人設定為上班
           newSchedule[day] = employees.map(emp => emp.id);
         }
         setSchedule(newSchedule);
-        setLockedAssignments({}); // 清空所有鎖定的職責
+        setLockedAssignments({}); 
         setShowClearConfirmModal(false);
       };
 
@@ -633,7 +659,16 @@
                         提示：勾選上班後，可透過下拉選單手動鎖定當天職責
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {history && (
+                        <button
+                          onClick={handleUndo}
+                          className="px-4 py-2 bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-lg hover:bg-yellow-100 transition-colors flex items-center text-sm font-medium shadow-sm fade-in"
+                        >
+                          <IconUndo className="w-4 h-4 mr-2" />
+                          復原上一步
+                        </button>
+                      )}
                       <button
                         onClick={() => setShowClearConfirmModal(true)}
                         className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors flex items-center text-sm font-medium shadow-sm"
@@ -954,7 +989,7 @@
                   </div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">確定要清除所有休假嗎？</h3>
                   <p className="text-sm text-gray-500 mb-6">
-                    這將會把這個月每一天的所有同仁都重置為「上班」狀態，並清空您手動鎖定的職責。此動作無法復原。
+                    這將會把這個月每一天的所有同仁都重置為「上班」狀態，並清空您手動鎖定的職責。
                   </p>
                   <div className="flex justify-center gap-3">
                     <button
