@@ -114,6 +114,7 @@
         try { localStorage.setItem('ShiftScheduler_employeePool', JSON.stringify(employeePool)); } catch (e) {}
       }, [employeePool]);
 
+      // 載入當月資料 (移除 employeePool 依賴，避免操作員工池時覆蓋資料)
       useEffect(() => {
         try {
           localStorage.setItem('ShiftScheduler_currentDate', currentDate);
@@ -166,8 +167,12 @@
                 });
               }
             } else {
-              const defaultIds = employeePool.slice(0, 6).map(e => e.id);
-              setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
+              // 若無名單，預設抓前 6 位
+              setEmployeePool(prevPool => {
+                const defaultIds = prevPool.slice(0, 6).map(e => e.id);
+                setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
+                return prevPool;
+              });
             }
             return;
           }
@@ -177,11 +182,15 @@
           setLockedAssignments({ evening: {}, night: {} });
           setAssignments({ evening: {}, night: {} });
           setStats({ evening: {}, night: {} });
-          const defaultIds = employeePool.slice(0, 6).map(e => e.id);
-          setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
+          
+          setEmployeePool(prevPool => {
+            const defaultIds = prevPool.slice(0, 6).map(e => e.id);
+            setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
+            return prevPool;
+          });
           
         } catch (e) {}
-      }, [currentDate, daysInMonth, employeePool]);
+      }, [currentDate, daysInMonth]);
 
       // 自動儲存當月資料
       useEffect(() => {
@@ -358,6 +367,7 @@
         setEmployeePool(prev => prev.map(emp => emp.id === empId ? { ...emp, roles: { ...emp.roles, [roleKey]: !emp.roles[roleKey] } } : emp));
       };
 
+      // 勾選參與排班的同仁
       const toggleActiveEmployee = (id) => {
         setActiveEmployeeIds(prev => {
           const currentList = prev[shiftType] || [];
@@ -583,13 +593,13 @@
                       return (
                         <div key={emp.id} className={`relative p-4 rounded-xl border-2 transition-all ${isActive ? 'bg-indigo-50/30 border-indigo-300 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                           <div className="flex justify-between items-start mb-3">
-                            <label className="flex items-center cursor-pointer group flex-1">
-                              <input type="checkbox" className="hidden" checked={isActive} onChange={() => toggleActiveEmployee(emp.id)} />
+                            {/* 將 label 與 hidden input 改為直接綁定 onClick 的 div，避免瀏覽器事件阻擋 */}
+                            <div onClick={() => toggleActiveEmployee(emp.id)} className="flex items-center cursor-pointer group flex-1">
                               <div className={`w-5 h-5 rounded border flex items-center justify-center mr-2 transition-colors ${isActive ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300 group-hover:border-indigo-400'}`}>
                                 {isActive && <IconCheckSquare className="w-4 h-4 text-white" />}
                               </div>
-                              <span className={`font-medium ${isActive ? 'text-indigo-900' : 'text-gray-700'}`}>{emp.name}</span>
-                            </label>
+                              <span className={`font-medium select-none ${isActive ? 'text-indigo-900' : 'text-gray-700'}`}>{emp.name}</span>
+                            </div>
                             <button onClick={() => handleDeleteEmployee(emp.id)} className="text-gray-400 hover:text-red-500 transition-colors ml-2"><IconTrash className="w-4 h-4" /></button>
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
