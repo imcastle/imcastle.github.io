@@ -114,7 +114,7 @@
         try { localStorage.setItem('ShiftScheduler_employeePool', JSON.stringify(employeePool)); } catch (e) {}
       }, [employeePool]);
 
-      // 載入當月資料 (移除 employeePool 依賴，避免操作員工池時覆蓋資料)
+      // 載入當月資料
       useEffect(() => {
         try {
           localStorage.setItem('ShiftScheduler_currentDate', currentDate);
@@ -154,20 +154,17 @@
             // 處理排班名單相容性
             if (parsed.activeEmployeeIds) {
               if (Array.isArray(parsed.activeEmployeeIds)) {
-                // 舊版單一名單
                 setActiveEmployeeIds({
                   evening: parsed.activeEmployeeIds,
                   night: []
                 });
               } else {
-                // 新版雙名單
                 setActiveEmployeeIds({
                   evening: parsed.activeEmployeeIds.evening || [],
                   night: parsed.activeEmployeeIds.night || []
                 });
               }
             } else {
-              // 若無名單，預設抓前 6 位
               setEmployeePool(prevPool => {
                 const defaultIds = prevPool.slice(0, 6).map(e => e.id);
                 setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
@@ -367,18 +364,27 @@
         setEmployeePool(prev => prev.map(emp => emp.id === empId ? { ...emp, roles: { ...emp.roles, [roleKey]: !emp.roles[roleKey] } } : emp));
       };
 
-      // 勾選參與排班的同仁
+      // 勾選參與排班的同仁 (修復幽靈資料導致長度計算錯誤的問題)
       const toggleActiveEmployee = (id) => {
         setActiveEmployeeIds(prev => {
           const currentList = prev[shiftType] || [];
-          if (currentList.includes(id)) {
-            return { ...prev, [shiftType]: currentList.filter(eId => eId !== id) };
+          
+          // 【修復重點】過濾掉已經不存在於員工池 (employeePool) 裡的幽靈 ID
+          const validList = currentList.filter(eId => employeePool.some(emp => emp.id === eId));
+          
+          if (validList.includes(id)) {
+            // 取消勾選
+            return { ...prev, [shiftType]: validList.filter(eId => eId !== id) };
           }
-          if (currentList.length >= 6) { 
+          
+          if (validList.length >= 6) { 
             alert(`每個月最多只能選擇 6 位同仁參與${shiftType === 'evening' ? '小夜班' : '大夜班'}排班！`); 
-            return prev; 
+            // 即使被阻擋，也順便把過濾好的乾淨名單存回去
+            return { ...prev, [shiftType]: validList }; 
           }
-          return { ...prev, [shiftType]: [...currentList, id] };
+          
+          // 新增勾選
+          return { ...prev, [shiftType]: [...validList, id] };
         });
       };
 
@@ -593,7 +599,6 @@
                       return (
                         <div key={emp.id} className={`relative p-4 rounded-xl border-2 transition-all ${isActive ? 'bg-indigo-50/30 border-indigo-300 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                           <div className="flex justify-between items-start mb-3">
-                            {/* 將 label 與 hidden input 改為直接綁定 onClick 的 div，避免瀏覽器事件阻擋 */}
                             <div onClick={() => toggleActiveEmployee(emp.id)} className="flex items-center cursor-pointer group flex-1">
                               <div className={`w-5 h-5 rounded border flex items-center justify-center mr-2 transition-colors ${isActive ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300 group-hover:border-indigo-400'}`}>
                                 {isActive && <IconCheckSquare className="w-4 h-4 text-white" />}
