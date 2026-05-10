@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>工作職責排班系統 (雙班表版)</title>
+  <title>工作職責排班系統 (雙班表獨立名單版)</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -89,9 +89,9 @@
       // 班別狀態：'evening' (小夜班) | 'night' (大夜班)
       const [shiftType, setShiftType] = useState('evening');
 
-      const [activeEmployeeIds, setActiveEmployeeIds] = useState([]);
+      // 將排班名單改為雙層結構：{ evening: [...], night: [...] }
+      const [activeEmployeeIds, setActiveEmployeeIds] = useState({ evening: [], night: [] });
       
-      // 將排班資料改為雙層結構：{ evening: {...}, night: {...} }
       const [schedule, setSchedule] = useState({ evening: {}, night: {} });
       const [lockedAssignments, setLockedAssignments] = useState({ evening: {}, night: {} });
       const [assignments, setAssignments] = useState({ evening: {}, night: {} });
@@ -103,12 +103,10 @@
       const [bonusModalEmpId, setBonusModalEmpId] = useState(null);
       const [multiBonusModalEmpId, setMultiBonusModalEmpId] = useState(null);
       
-      // 跨月統計狀態
       const [multiStartMonth, setMultiStartMonth] = useState(`${year}-01`);
       const [multiEndMonth, setMultiEndMonth] = useState(currentDate);
       const [multiStats, setMultiStats] = useState({});
       
-      // 圖片匯出用的 Refs
       const scheduleTableRef = useRef(null);
       const statsTableRef = useRef(null);
 
@@ -126,8 +124,6 @@
 
           if (savedData) {
             const parsed = JSON.parse(savedData);
-            
-            // 相容舊資料 (舊資料沒有 evening/night 屬性)
             const isOldFormat = !parsed.schedule?.evening && !parsed.schedule?.night;
             
             if (isOldFormat) {
@@ -154,10 +150,24 @@
               });
             }
 
-            if (parsed.activeEmployeeIds && parsed.activeEmployeeIds.length <= 6) {
-              setActiveEmployeeIds(parsed.activeEmployeeIds);
+            // 處理排班名單相容性
+            if (parsed.activeEmployeeIds) {
+              if (Array.isArray(parsed.activeEmployeeIds)) {
+                // 舊版單一名單
+                setActiveEmployeeIds({
+                  evening: parsed.activeEmployeeIds,
+                  night: []
+                });
+              } else {
+                // 新版雙名單
+                setActiveEmployeeIds({
+                  evening: parsed.activeEmployeeIds.evening || [],
+                  night: parsed.activeEmployeeIds.night || []
+                });
+              }
             } else {
-              setActiveEmployeeIds(employeePool.slice(0, 6).map(e => e.id));
+              const defaultIds = employeePool.slice(0, 6).map(e => e.id);
+              setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
             }
             return;
           }
@@ -167,38 +177,36 @@
           setLockedAssignments({ evening: {}, night: {} });
           setAssignments({ evening: {}, night: {} });
           setStats({ evening: {}, night: {} });
-          setActiveEmployeeIds(employeePool.slice(0, 6).map(e => e.id));
+          const defaultIds = employeePool.slice(0, 6).map(e => e.id);
+          setActiveEmployeeIds({ evening: defaultIds, night: defaultIds });
           
         } catch (e) {}
-      }, [currentDate, daysInMonth]);
+      }, [currentDate, daysInMonth, employeePool]);
 
       // 自動儲存當月資料
       useEffect(() => {
-        if (activeEmployeeIds.length > 0) {
-          try {
-            const dataToSave = { schedule, lockedAssignments, assignments, stats, activeEmployeeIds };
-            localStorage.setItem(`ShiftScheduler_data_${currentDate}`, JSON.stringify(dataToSave));
-          } catch (e) {}
-        }
+        try {
+          const dataToSave = { schedule, lockedAssignments, assignments, stats, activeEmployeeIds };
+          localStorage.setItem(`ShiftScheduler_data_${currentDate}`, JSON.stringify(dataToSave));
+        } catch (e) {}
       }, [schedule, lockedAssignments, assignments, stats, activeEmployeeIds, currentDate]);
 
+      // 根據當前選擇的班別，取得對應的上班同仁名單
       const activeEmployees = useMemo(() => {
-        return activeEmployeeIds.map(id => employeePool.find(e => e.id === id)).filter(Boolean);
-      }, [activeEmployeeIds, employeePool]);
+        const currentIds = activeEmployeeIds[shiftType] || [];
+        return currentIds.map(id => employeePool.find(e => e.id === id)).filter(Boolean);
+      }, [activeEmployeeIds, shiftType, employeePool]);
 
       const handleMonthChange = (e) => setCurrentDate(e.target.value);
       const getDayOfWeekIndex = (y, m, day) => new Date(y, m - 1, day).getDay();
       const getDayOfWeek = (y, m, day) => ['日', '一', '二', '三', '四', '五', '六'][getDayOfWeekIndex(y, m, day)];
       const isWeekend = (y, m, day) => getDayOfWeekIndex(y, m, day) === 0 || getDayOfWeekIndex(y, m, day) === 6;
 
-      // 職責加給計算 (根據班別區分)
       const getRoleBonusHours = (role, sType) => {
         if (sType === 'evening') {
-          // 小夜班: M=1, P=1, G=3, CT=3
           if (role === 'm' || role === 'p') return 1;
           if (role === 'g' || role === 'ct') return 3;
         } else if (sType === 'night') {
-          // 大夜班: M=2, P=1, G=3, CT=2
           if (role === 'm' || role === 'ct') return 2;
           if (role === 'g') return 3;
           if (role === 'p') return 1;
@@ -206,7 +214,6 @@
         return 0;
       };
 
-      // 一鍵儲存
       const handleSaveCurrentMonth = () => {
         try {
           const dataToSave = { schedule, lockedAssignments, assignments, stats, activeEmployeeIds };
@@ -217,7 +224,6 @@
         }
       };
 
-      // 匯出 CSV 功能 (針對當前選擇的班別)
       const handleExportCSV = () => {
         const currentAssignments = assignments[shiftType] || {};
         if (Object.keys(currentAssignments).length === 0) {
@@ -228,11 +234,8 @@
         const shiftName = shiftType === 'evening' ? '小夜班' : '大夜班';
         let csvContent = '\uFEFF';
 
-        // --- 1. 橫式班表區塊 ---
         csvContent += `同仁 \\ 日期,`;
-        for (let day = 1; day <= daysInMonth; day++) {
-          csvContent += `${day}日,`;
-        }
+        for (let day = 1; day <= daysInMonth; day++) csvContent += `${day}日,`;
         csvContent += '\n';
 
         activeEmployees.forEach(emp => {
@@ -244,48 +247,34 @@
           csvContent += row + '\n';
         });
 
-        csvContent += '\n\n'; // 空行分隔
-
-        // --- 2. 統計與加給明細區塊 ---
-        csvContent += '同仁,總天數,M,P,G,CT,F,總加給時數,加給明細\n';
+        csvContent += '\n\n同仁,總天數,M,P,G,CT,F,總加給時數,加給明細\n';
         activeEmployees.forEach(emp => {
           const s = stats[shiftType][emp.id] || { total_shifts: 0, m: 0, p: 0, g: 0, ct: 0, f: 0 };
           const bonusInfo = getEmployeeBonusDetails(emp.id, shiftType);
-          const detailsStr = bonusInfo.details
-            .map(d => `${d.day}日(${d.role.toUpperCase()}:${d.hours}hr)`)
-            .join(' | ');
-          
+          const detailsStr = bonusInfo.details.map(d => `${d.day}日(${d.role.toUpperCase()}:${d.hours}hr)`).join(' | ');
           csvContent += `${emp.name},${s.total_shifts},${s.m},${s.p},${s.g},${s.ct},${s.f},${bonusInfo.totalHours} hr,${detailsStr || '無'}\n`;
         });
 
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', `${year}年${month}月_${shiftName}_排班表與加給明細.csv`);
+        link.href = URL.createObjectURL(blob);
+        link.download = `${year}年${month}月_${shiftName}_排班表與加給明細.csv`;
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
       };
 
-      // 匯出圖片共用函式
       const exportAsImage = async (ref, filenameSuffix) => {
         if (!ref.current) return;
         try {
-          const canvas = await html2canvas(ref.current, { 
-            scale: 2, 
-            backgroundColor: '#ffffff',
-            useCORS: true
-          });
-          const image = canvas.toDataURL("image/png");
+          const canvas = await html2canvas(ref.current, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
           const link = document.createElement("a");
-          link.href = image;
+          link.href = canvas.toDataURL("image/png");
           const shiftName = shiftType === 'evening' ? '小夜班' : '大夜班';
           link.download = `${year}年${month}月_${shiftName}_${filenameSuffix}.png`;
           link.click();
         } catch (error) {
-          console.error("匯出圖片失敗", error);
           alert("匯出圖片失敗，請稍後再試。");
         }
       };
@@ -293,15 +282,12 @@
       const handleExportScheduleImage = () => exportAsImage(scheduleTableRef, '排班表');
       const handleExportStatsImage = () => exportAsImage(statsTableRef, '加給明細表');
 
-      // 跨月統計邏輯 (合併小夜與大夜)
       const getMonthsInRange = (start, end) => {
         let current = new Date(start + '-01');
         let endDate = new Date(end + '-01');
         let months = [];
         while (current <= endDate) {
-          let y = current.getFullYear();
-          let m = String(current.getMonth() + 1).padStart(2, '0');
-          months.push(`${y}-${m}`);
+          months.push(`${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`);
           current.setMonth(current.getMonth() + 1);
         }
         return months;
@@ -310,7 +296,6 @@
       const generateMultiStats = () => {
         const months = getMonthsInRange(multiStartMonth, multiEndMonth);
         const agg = {};
-        
         employeePool.forEach(emp => {
           agg[emp.id] = { name: emp.name, m: 0, p: 0, g: 0, ct: 0, f: 0, total_shifts: 0, bonusHours: 0, details: [] };
         });
@@ -321,28 +306,22 @@
             if (data) {
               const parsed = JSON.parse(data);
               const [yStr, moStr] = mStr.split('-');
-              const y = parseInt(yStr);
-              const mo = parseInt(moStr);
+              const y = parseInt(yStr), mo = parseInt(moStr);
               const dInM = new Date(y, mo, 0).getDate();
-              
-              // 處理舊資料相容 (若無 evening/night 則視為 evening)
               const isOldFormat = !parsed.assignments?.evening && !parsed.assignments?.night;
               const typesToProcess = isOldFormat ? ['evening'] : ['evening', 'night'];
 
               typesToProcess.forEach(sType => {
                 const mAssignments = isOldFormat ? (parsed.assignments || {}) : (parsed.assignments[sType] || {});
-                
                 for (let day = 1; day <= dInM; day++) {
-                  const dayAssign = mAssignments[day] || {};
-                  Object.entries(dayAssign).forEach(([empId, role]) => {
+                  Object.entries(mAssignments[day] || {}).forEach(([empId, role]) => {
                     if (agg[empId]) {
                       agg[empId][role]++;
                       agg[empId].total_shifts++;
                       const hours = getRoleBonusHours(role, sType);
                       if (hours > 0) {
                         agg[empId].bonusHours += hours;
-                        const shiftLabel = sType === 'evening' ? '小夜' : '大夜';
-                        agg[empId].details.push({ month: mStr, day, role, hours, dayOfWeek: getDayOfWeek(y, mo, day), shiftLabel });
+                        agg[empId].details.push({ month: mStr, day, role, hours, dayOfWeek: getDayOfWeek(y, mo, day), shiftLabel: sType === 'evening' ? '小夜' : '大夜' });
                       }
                     }
                   });
@@ -355,12 +334,10 @@
       };
 
       useEffect(() => {
-        if (activeTab === 'multi-stats') {
-          generateMultiStats();
-        }
+        if (activeTab === 'multi-stats') generateMultiStats();
       }, [activeTab, multiStartMonth, multiEndMonth]);
 
-      // 員工池操作
+      // --- 員工池與名單操作 ---
       const handleAddEmployee = () => {
         if (!newEmpName.trim()) return;
         setEmployeePool(prev => [...prev, { id: 'emp_' + Date.now(), name: newEmpName.trim(), roles: { m: true, p: true, g: true, ct: true, f: true } }]);
@@ -370,7 +347,10 @@
       const handleDeleteEmployee = (id) => {
         if (confirm('確定要從員工池刪除此同仁嗎？')) {
           setEmployeePool(prev => prev.filter(e => e.id !== id));
-          setActiveEmployeeIds(prev => prev.filter(eId => eId !== id));
+          setActiveEmployeeIds(prev => ({
+            evening: (prev.evening || []).filter(eId => eId !== id),
+            night: (prev.night || []).filter(eId => eId !== id)
+          }));
         }
       };
 
@@ -380,27 +360,33 @@
 
       const toggleActiveEmployee = (id) => {
         setActiveEmployeeIds(prev => {
-          if (prev.includes(id)) return prev.filter(eId => eId !== id);
-          if (prev.length >= 6) { alert('每個月最多只能選擇 6 位同仁參與排班！'); return prev; }
-          return [...prev, id];
+          const currentList = prev[shiftType] || [];
+          if (currentList.includes(id)) {
+            return { ...prev, [shiftType]: currentList.filter(eId => eId !== id) };
+          }
+          if (currentList.length >= 6) { 
+            alert(`每個月最多只能選擇 6 位同仁參與${shiftType === 'evening' ? '小夜班' : '大夜班'}排班！`); 
+            return prev; 
+          }
+          return { ...prev, [shiftType]: [...currentList, id] };
         });
       };
 
       const moveEmployeeUp = (index) => {
         setActiveEmployeeIds(prev => {
           if (index === 0) return prev;
-          const newIds = [...prev];
-          [newIds[index - 1], newIds[index]] = [newIds[index], newIds[index - 1]];
-          return newIds;
+          const currentList = [...(prev[shiftType] || [])];
+          [currentList[index - 1], currentList[index]] = [currentList[index], currentList[index - 1]];
+          return { ...prev, [shiftType]: currentList };
         });
       };
 
       const moveEmployeeDown = (index) => {
         setActiveEmployeeIds(prev => {
-          if (index === prev.length - 1) return prev;
-          const newIds = [...prev];
-          [newIds[index + 1], newIds[index]] = [newIds[index], newIds[index + 1]];
-          return newIds;
+          const currentList = [...(prev[shiftType] || [])];
+          if (index === currentList.length - 1) return prev;
+          [currentList[index + 1], currentList[index]] = [currentList[index], currentList[index + 1]];
+          return { ...prev, [shiftType]: currentList };
         });
       };
 
@@ -409,7 +395,6 @@
           const daySchedule = prev[shiftType][day] || [];
           let newDaySchedule;
           if (daySchedule.includes(empId)) {
-            // 移除上班，同時移除鎖定
             setLockedAssignments(lPrev => {
               const newLocks = { ...lPrev };
               if (newLocks[shiftType][day]) {
@@ -433,10 +418,8 @@
           const newLocks = { ...prev };
           const shiftLocks = { ...(newLocks[shiftType] || {}) };
           const dayLocks = { ...(shiftLocks[day] || {}) };
-          
           if (role === 'auto') delete dayLocks[empId];
           else dayLocks[empId] = role;
-          
           shiftLocks[day] = dayLocks;
           newLocks[shiftType] = shiftLocks;
           return newLocks;
@@ -444,7 +427,7 @@
       };
 
       const generateSchedule = () => {
-        if (activeEmployees.length !== 6) return alert(`目前已選 ${activeEmployees.length} 人。請先至「0. 員工池設定」勾選剛好 6 位同仁參與本月排班！`);
+        if (activeEmployees.length !== 6) return alert(`目前已選 ${activeEmployees.length} 人。請先至「0. 員工池」勾選剛好 6 位同仁參與 ${shiftType === 'evening' ? '小夜班' : '大夜班'} 排班！`);
         
         let newAssignments = {};
         let newStats = {};
@@ -504,7 +487,6 @@
         const details = [];
         let totalHours = 0;
         const currentAssignments = assignments[sType] || {};
-        
         for (let day = 1; day <= daysInMonth; day++) {
           const role = currentAssignments[day]?.[empId];
           if (role) {
@@ -580,12 +562,15 @@
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-800 flex items-center"><IconUsers className="w-5 h-5 mr-2 text-indigo-500" />全域員工池與本月排班名單</h2>
-                      <p className="text-sm text-gray-500 mt-1">請勾選剛好 <strong className="text-indigo-600">6 位</strong> 參與 {month} 月排班。(小夜/大夜共用此名單)</p>
+                      <h2 className="text-lg font-semibold text-gray-800 flex items-center">
+                        <IconUsers className="w-5 h-5 mr-2 text-indigo-500" />
+                        全域員工池與 <span className={`ml-1 px-2 py-0.5 rounded text-sm ${shiftType === 'night' ? 'bg-indigo-100 text-indigo-800' : 'bg-orange-50 text-orange-600'}`}>{shiftType === 'evening' ? '小夜班' : '大夜班'}</span> 排班名單
+                      </h2>
+                      <p className="text-sm text-gray-500 mt-2">請勾選剛好 <strong className="text-indigo-600">6 位</strong> 參與 {month} 月 <strong className="text-gray-700">{shiftType === 'evening' ? '小夜班' : '大夜班'}</strong> 排班。(切換上方班別可分別設定名單)</p>
                     </div>
                     <div className="flex items-center bg-indigo-50 px-4 py-2 rounded-lg border border-indigo-100">
-                      <span className="text-sm font-medium text-indigo-800 mr-2">本月已選人數：</span>
-                      <span className={`text-lg font-bold ${activeEmployeeIds.length === 6 ? 'text-green-600' : 'text-red-500'}`}>{activeEmployeeIds.length} / 6</span>
+                      <span className="text-sm font-medium text-indigo-800 mr-2">本班別已選人數：</span>
+                      <span className={`text-lg font-bold ${activeEmployees.length === 6 ? 'text-green-600' : 'text-red-500'}`}>{activeEmployees.length} / 6</span>
                     </div>
                   </div>
                   <div className="flex gap-2 mb-6">
@@ -594,7 +579,7 @@
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {employeePool.map(emp => {
-                      const isActive = activeEmployeeIds.includes(emp.id);
+                      const isActive = (activeEmployeeIds[shiftType] || []).includes(emp.id);
                       return (
                         <div key={emp.id} className={`relative p-4 rounded-xl border-2 transition-all ${isActive ? 'bg-indigo-50/30 border-indigo-300 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                           <div className="flex justify-between items-start mb-3">
@@ -623,7 +608,7 @@
                     <div className="mt-8 pt-6 border-t border-gray-100">
                       <h3 className="text-md font-semibold text-gray-800 mb-4 flex items-center">
                         <IconList className="w-5 h-5 mr-2 text-indigo-500" />
-                        排班名單順序調整
+                        {shiftType === 'evening' ? '小夜班' : '大夜班'} 排班名單順序調整
                         <span className="text-sm font-normal text-gray-500 ml-2">(將影響排休表與結果的顯示順序)</span>
                       </h3>
                       <div className="flex flex-col gap-2 max-w-sm">
@@ -656,54 +641,58 @@
                       <div className={`text-sm flex items-center mt-2 ${shiftType === 'night' ? 'text-indigo-200' : 'text-gray-500'}`}>勾選上班後，可手動鎖定當天職責</div>
                     </div>
                   </div>
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <table className="w-full text-sm text-center">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="py-3 px-2 font-medium text-gray-600 border-b">日期</th>
-                          <th className="py-3 px-2 font-medium text-gray-600 border-b">星期</th>
-                          {activeEmployees.map(emp => <th key={emp.id} className="py-3 px-2 font-medium text-gray-600 border-b">{emp.name}</th>)}
-                          <th className="py-3 px-2 font-medium text-gray-600 border-b">上班人數</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                          const isWknd = isWeekend(year, month, day);
-                          const workingCount = schedule[shiftType][day]?.length || 0;
-                          const isValid = workingCount === 4 || workingCount === 5;
-                          return (
-                            <tr key={day} className={`border-b border-gray-50 hover:bg-gray-50 ${isWknd ? 'bg-red-50/30' : ''}`}>
-                              <td className="py-3 px-2 font-medium text-gray-700">{month}/{day}</td>
-                              <td className={`py-3 px-2 ${isWknd ? 'text-red-500' : 'text-gray-500'}`}>{getDayOfWeek(year, month, day)}</td>
-                              {activeEmployees.map(emp => {
-                                const isWorking = schedule[shiftType][day]?.includes(emp.id);
-                                const lockedRole = lockedAssignments[shiftType][day]?.[emp.id] || 'auto';
-                                return (
-                                  <td key={emp.id} className="py-2 px-2">
-                                    <div className="flex flex-col items-center gap-1.5">
-                                      <button onClick={() => toggleWorkStatus(day, emp.id)} className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${isWorking ? (shiftType === 'night' ? 'bg-indigo-800 text-white' : 'bg-indigo-500 text-white') : 'bg-gray-100 border border-gray-200'}`}>
-                                        {isWorking && <IconCheckCircle className="w-5 h-5" />}
-                                      </button>
-                                      {isWorking ? (
-                                        <select value={lockedRole} onChange={(e) => handleLockRole(day, emp.id, e.target.value)} className="text-xs rounded border outline-none cursor-pointer bg-transparent text-gray-500">
-                                          <option value="auto">自動</option>
-                                          <option value="m">M</option><option value="p">P</option><option value="g">G</option><option value="ct">CT</option>
-                                          {workingCount === 5 && <option value="f">F</option>}
-                                        </select>
-                                      ) : <div className="h-5"></div>}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                              <td className="py-3 px-2">
-                                <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${isValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{workingCount} / 4~5</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  {activeEmployees.length === 0 ? (
+                    <div className="p-12 text-center text-gray-500">請先至「0. 員工池」勾選參與 {shiftType === 'evening' ? '小夜班' : '大夜班'} 排班的同仁。</div>
+                  ) : (
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-sm text-center">
+                        <thead>
+                          <tr className="bg-gray-50">
+                            <th className="py-3 px-2 font-medium text-gray-600 border-b">日期</th>
+                            <th className="py-3 px-2 font-medium text-gray-600 border-b">星期</th>
+                            {activeEmployees.map(emp => <th key={emp.id} className="py-3 px-2 font-medium text-gray-600 border-b">{emp.name}</th>)}
+                            <th className="py-3 px-2 font-medium text-gray-600 border-b">上班人數</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                            const isWknd = isWeekend(year, month, day);
+                            const workingCount = schedule[shiftType][day]?.length || 0;
+                            const isValid = workingCount === 4 || workingCount === 5;
+                            return (
+                              <tr key={day} className={`border-b border-gray-50 hover:bg-gray-50 ${isWknd ? 'bg-red-50/30' : ''}`}>
+                                <td className="py-3 px-2 font-medium text-gray-700">{month}/{day}</td>
+                                <td className={`py-3 px-2 ${isWknd ? 'text-red-500' : 'text-gray-500'}`}>{getDayOfWeek(year, month, day)}</td>
+                                {activeEmployees.map(emp => {
+                                  const isWorking = schedule[shiftType][day]?.includes(emp.id);
+                                  const lockedRole = lockedAssignments[shiftType][day]?.[emp.id] || 'auto';
+                                  return (
+                                    <td key={emp.id} className="py-2 px-2">
+                                      <div className="flex flex-col items-center gap-1.5">
+                                        <button onClick={() => toggleWorkStatus(day, emp.id)} className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${isWorking ? (shiftType === 'night' ? 'bg-indigo-800 text-white' : 'bg-indigo-500 text-white') : 'bg-gray-100 border border-gray-200'}`}>
+                                          {isWorking && <IconCheckCircle className="w-5 h-5" />}
+                                        </button>
+                                        {isWorking ? (
+                                          <select value={lockedRole} onChange={(e) => handleLockRole(day, emp.id, e.target.value)} className="text-xs rounded border outline-none cursor-pointer bg-transparent text-gray-500">
+                                            <option value="auto">自動</option>
+                                            <option value="m">M</option><option value="p">P</option><option value="g">G</option><option value="ct">CT</option>
+                                            {workingCount === 5 && <option value="f">F</option>}
+                                          </select>
+                                        ) : <div className="h-5"></div>}
+                                      </div>
+                                    </td>
+                                  );
+                                })}
+                                <td className="py-3 px-2">
+                                  <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${isValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{workingCount} / 4~5</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                   <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
                     <button onClick={generateSchedule} className={`px-6 py-3 text-white rounded-xl flex items-center font-medium shadow-sm transition-colors ${shiftType === 'night' ? 'bg-indigo-800 hover:bg-indigo-900' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
                       <IconRefreshCw className="w-5 h-5 mr-2" />
